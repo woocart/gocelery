@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// CeleryClientInterface describes CeleryClient
+type CeleryClientInterface interface {
+	Delay(task string, args ...interface{}) (*AsyncResult, error)
+	DelayKwargs(task string, args map[string]interface{}) (*AsyncResult, error)
+}
+
 // CeleryClient provides API for sending celery tasks
 type CeleryClient struct {
 	broker  CeleryBroker
