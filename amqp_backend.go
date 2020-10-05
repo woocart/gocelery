@@ -1,3 +1,7 @@
+// Copyright (c) 2019 Sick Yoon
+// This file is part of gocelery which is released under MIT license.
+// See file LICENSE for full license details.
+
 package gocelery
 
 import (
@@ -11,34 +15,32 @@ import (
 // AMQPCeleryBackend CeleryBackend for AMQP
 type AMQPCeleryBackend struct {
 	*amqp.Channel
-	connection *amqp.Connection
-	exchange   *AMQPExchange
-	host       string
-}
-
-// NewAMQPCeleryBackendByConnAndChannel creates new AMQPCeleryBackend by AMQP conn and channel
-func NewAMQPCeleryBackendByConnAndChannel(conn *amqp.Connection, channel *amqp.Channel) *AMQPCeleryBackend {
-	// ensure exchange is initialized
-	backend := &AMQPCeleryBackend{
-		Channel:    channel,
-		connection: conn,
-	}
-	return backend
+	Connection *amqp.Connection
+	Host       string
 }
 
 // NewAMQPCeleryBackend creates new AMQPCeleryBackend
 func NewAMQPCeleryBackend(host string) *AMQPCeleryBackend {
 	backend := NewAMQPCeleryBackendByConnAndChannel(NewAMQPConnection(host))
-	backend.host = host
+	backend.Host = host
+	return backend
+}
+
+// NewAMQPCeleryBackendByConnAndChannel creates new AMQPCeleryBackend by AMQP connection and channel
+func NewAMQPCeleryBackendByConnAndChannel(conn *amqp.Connection, channel *amqp.Channel) *AMQPCeleryBackend {
+	backend := &AMQPCeleryBackend{
+		Channel:    channel,
+		Connection: conn,
+	}
 	return backend
 }
 
 // Reconnect reconnects to AMQP server
 func (b *AMQPCeleryBackend) Reconnect() {
-	b.connection.Close()
-	conn, channel := NewAMQPConnection(b.host)
+	b.Connection.Close()
+	conn, channel := NewAMQPConnection(b.Host)
 	b.Channel = channel
-	b.connection = conn
+	b.Connection = conn
 }
 
 // GetResult retrieves result from AMQP queue
@@ -73,13 +75,6 @@ func (b *AMQPCeleryBackend) GetResult(taskID string) (*ResultMessage, error) {
 		return nil, err
 	}
 
-	// Hack to avoid Exception (503) Reason: "unexpected command received"
-	// https://github.com/streadway/amqp/issues/170
-	// AMQP does not allow concurrent use of channels!
-	// Fixed by implementing periodic polling
-	// https://github.com/shicky/gocelery/issues/18
-	// time.Sleep(50 * time.Millisecond)
-
 	// open channel temporarily
 	channel, err := b.Consume(queueName, "", false, false, false, false, nil)
 	if err != nil {
@@ -89,24 +84,11 @@ func (b *AMQPCeleryBackend) GetResult(taskID string) (*ResultMessage, error) {
 	var resultMessage ResultMessage
 
 	delivery := <-channel
-	delivery.Ack(false)
+	deliveryAck(delivery)
 	if err := json.Unmarshal(delivery.Body, &resultMessage); err != nil {
 		return nil, err
 	}
 	return &resultMessage, nil
-
-	/*
-		select {
-		case delivery := <-channel:
-			delivery.Ack(false)
-			if err := json.Unmarshal(delivery.Body, &resultMessage); err != nil {
-				return nil, err
-			}
-			return &resultMessage, nil
-		default:
-			return nil, fmt.Errorf("failed to read from channel")
-		}
-	*/
 }
 
 // SetResult sets result back to AMQP queue

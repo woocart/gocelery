@@ -1,3 +1,7 @@
+// Copyright (c) 2019 Sick Yoon
+// This file is part of gocelery which is released under MIT license.
+// See file LICENSE for full license details.
+
 package gocelery
 
 import (
@@ -7,12 +11,14 @@ import (
 	"reflect"
 	"sync"
 	"time"
+
+	uuid "github.com/satori/go.uuid"
 )
 
 // CeleryMessage is actual message to be sent to Redis
 type CeleryMessage struct {
 	Body            string                 `json:"body"`
-	Headers         map[string]interface{} `json:"headers"`
+	Headers         map[string]interface{} `json:"headers,omitempty"`
 	ContentType     string                 `json:"content-type"`
 	Properties      CeleryProperties       `json:"properties"`
 	ContentEncoding string                 `json:"content-encoding"`
@@ -21,9 +27,9 @@ type CeleryMessage struct {
 func (cm *CeleryMessage) reset() {
 	cm.Headers = nil
 	cm.Body = ""
-	cm.Properties.CorrelationID = generateUUID()
-	cm.Properties.ReplyTo = generateUUID()
-	cm.Properties.DeliveryTag = generateUUID()
+	cm.Properties.CorrelationID = uuid.Must(uuid.NewV4()).String()
+	cm.Properties.ReplyTo = uuid.Must(uuid.NewV4()).String()
+	cm.Properties.DeliveryTag = uuid.Must(uuid.NewV4()).String()
 }
 
 var celeryMessagePool = sync.Pool{
@@ -34,15 +40,15 @@ var celeryMessagePool = sync.Pool{
 			ContentType: "application/json",
 			Properties: CeleryProperties{
 				BodyEncoding:  "base64",
-				CorrelationID: generateUUID(),
-				ReplyTo:       generateUUID(),
+				CorrelationID: uuid.Must(uuid.NewV4()).String(),
+				ReplyTo:       uuid.Must(uuid.NewV4()).String(),
 				DeliveryInfo: CeleryDeliveryInfo{
 					Priority:   0,
 					RoutingKey: "celery",
 					Exchange:   "celery",
 				},
 				DeliveryMode: 2,
-				DeliveryTag:  generateUUID(),
+				DeliveryTag:  uuid.Must(uuid.NewV4()).String(),
 			},
 			ContentEncoding: "utf-8",
 		}
@@ -64,7 +70,7 @@ func releaseCeleryMessage(v *CeleryMessage) {
 type CeleryProperties struct {
 	BodyEncoding  string             `json:"body_encoding"`
 	CorrelationID string             `json:"correlation_id"`
-	ReplyTo       string             `json:"replay_to"`
+	ReplyTo       string             `json:"reply_to"`
 	DeliveryInfo  CeleryDeliveryInfo `json:"delivery_info"`
 	DeliveryMode  int                `json:"delivery_mode"`
 	DeliveryTag   string             `json:"delivery_tag"`
@@ -110,11 +116,12 @@ type TaskMessage struct {
 	Args    []interface{}          `json:"args"`
 	Kwargs  map[string]interface{} `json:"kwargs"`
 	Retries int                    `json:"retries"`
-	ETA     string                 `json:"eta"`
+	ETA     *string                `json:"eta"`
+	Expires *time.Time             `json:"expires"`
 }
 
 func (tm *TaskMessage) reset() {
-	tm.ID = generateUUID()
+	tm.ID = uuid.Must(uuid.NewV4()).String()
 	tm.Task = ""
 	tm.Args = nil
 	tm.Kwargs = nil
@@ -122,11 +129,12 @@ func (tm *TaskMessage) reset() {
 
 var taskMessagePool = sync.Pool{
 	New: func() interface{} {
+		eta := time.Now().Format(time.RFC3339)
 		return &TaskMessage{
-			ID:      generateUUID(),
+			ID:      uuid.Must(uuid.NewV4()).String(),
 			Retries: 0,
 			Kwargs:  nil,
-			ETA:     time.Now().Format(time.RFC3339),
+			ETA:     &eta,
 		}
 	},
 }
@@ -136,7 +144,7 @@ func getTaskMessage(task string) *TaskMessage {
 	msg.Task = task
 	msg.Args = make([]interface{}, 0)
 	msg.Kwargs = make(map[string]interface{})
-	msg.ETA = time.Now().Format(time.RFC3339)
+	msg.ETA = nil
 	return msg
 }
 
@@ -161,6 +169,9 @@ func DecodeTaskMessage(encodedBody string) (*TaskMessage, error) {
 
 // Encode returns base64 json encoded string
 func (tm *TaskMessage) Encode() (string, error) {
+	if tm.Args == nil {
+		tm.Args = make([]interface{}, 0)
+	}
 	jsonData, err := json.Marshal(tm)
 	if err != nil {
 		return "", err

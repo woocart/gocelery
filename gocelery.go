@@ -1,6 +1,11 @@
+// Copyright (c) 2019 Sick Yoon
+// This file is part of gocelery which is released under MIT license.
+// See file LICENSE for full license details.
+
 package gocelery
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -44,6 +49,11 @@ func (cc *CeleryClient) Register(name string, task interface{}) {
 	cc.worker.Register(name, task)
 }
 
+// StartWorkerWithContext starts celery workers with given parent context
+func (cc *CeleryClient) StartWorkerWithContext(ctx context.Context) {
+	cc.worker.StartWorkerWithContext(ctx)
+}
+
 // StartWorker starts celery workers
 func (cc *CeleryClient) StartWorker() {
 	cc.worker.StartWorker()
@@ -52,6 +62,11 @@ func (cc *CeleryClient) StartWorker() {
 // StopWorker stops celery workers
 func (cc *CeleryClient) StopWorker() {
 	cc.worker.StopWorker()
+}
+
+// WaitForStopWorker waits for celery workers to terminate
+func (cc *CeleryClient) WaitForStopWorker() {
+	cc.worker.StopWait()
 }
 
 // Delay gets asynchronous result
@@ -81,7 +96,7 @@ func (cc *CeleryClient) delay(task *TaskMessage) (*AsyncResult, error) {
 		return nil, err
 	}
 	return &AsyncResult{
-		taskID:  task.ID,
+		TaskID:  task.ID,
 		backend: cc.backend,
 	}, nil
 }
@@ -95,26 +110,26 @@ type CeleryTask interface {
 	// ParseKwargs - define a method to parse kwargs
 	ParseKwargs(map[string]interface{}) error
 
-	// RunTask - define a method to run
+	// RunTask - define a method for execution
 	RunTask() (interface{}, error)
 }
 
-// AsyncResult is pending result
+// AsyncResult represents pending result
 type AsyncResult struct {
-	taskID  string
+	TaskID  string
 	backend CeleryBackend
 	result  *ResultMessage
 }
 
-// Get gets actual result from redis
-// It blocks for period of time set by timeout and return error if unavailable
+// Get gets actual result from backend
+// It blocks for period of time set by timeout and returns error if unavailable
 func (ar *AsyncResult) Get(timeout time.Duration) (interface{}, error) {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	timeoutChan := time.After(timeout)
 	for {
 		select {
 		case <-timeoutChan:
-			err := fmt.Errorf("%v timeout getting result for %s", timeout, ar.taskID)
+			err := fmt.Errorf("%v timeout getting result for %s", timeout, ar.TaskID)
 			return nil, err
 		case <-ticker.C:
 			val, err := ar.AsyncGet()
@@ -126,13 +141,12 @@ func (ar *AsyncResult) Get(timeout time.Duration) (interface{}, error) {
 	}
 }
 
-// AsyncGet gets actual result from redis and returns nil if not available
+// AsyncGet gets actual result from backend and returns nil if not available
 func (ar *AsyncResult) AsyncGet() (interface{}, error) {
 	if ar.result != nil {
 		return ar.result.Result, nil
 	}
-	// process
-	val, err := ar.backend.GetResult(ar.taskID)
+	val, err := ar.backend.GetResult(ar.TaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +165,7 @@ func (ar *AsyncResult) Ready() (bool, error) {
 	if ar.result != nil {
 		return true, nil
 	}
-	val, err := ar.backend.GetResult(ar.taskID)
+	val, err := ar.backend.GetResult(ar.TaskID)
 	if err != nil {
 		return false, err
 	}

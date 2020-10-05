@@ -2,24 +2,25 @@
 
 Go Client/Server for Celery Distributed Task Queue
 
-[![Build Status](https://travis-ci.org/shicky/gocelery.svg?branch=master)](https://travis-ci.org/shicky/gocelery)
-[![Coverage Status](https://coveralls.io/repos/github/shicky/gocelery/badge.svg?branch=master)](https://coveralls.io/github/shicky/gocelery?branch=master)
-[![Go Report Card](https://goreportcard.com/badge/github.com/shicky/gocelery)](https://goreportcard.com/report/github.com/shicky/gocelery)
-[![GoDoc](https://godoc.org/github.com/shicky/gocelery?status.svg)](https://godoc.org/github.com/shicky/gocelery)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/shicky/gocelery/blob/master/LICENSE)
-[![motivation](https://img.shields.io/badge/made%20with-%E2%99%A1-ff69b4.svg)](https://github.com/shicky/gocelery)
+[![Build Status](https://github.com/gocelery/gocelery/workflows/Go/badge.svg)](https://github.com/gocelery/gocelery/workflows/Go/badge.svg)
+[![Coverage Status](https://coveralls.io/repos/github/gocelery/gocelery/badge.svg?branch=master)](https://coveralls.io/github/gocelery/gocelery?branch=master)
+[![Go Report Card](https://goreportcard.com/badge/github.com/gocelery/gocelery)](https://goreportcard.com/report/github.com/gocelery/gocelery)
+[!["Open Issues"](https://img.shields.io/github/issues-raw/gocelery/gocelery.svg)](https://github.com/gocelery/gocelery/issues)
+[!["Latest Release"](https://img.shields.io/github/release/gocelery/gocelery.svg)](https://github.com/gocelery/gocelery/releases/latest)
+[![GoDoc](https://godoc.org/github.com/gocelery/gocelery?status.svg)](https://godoc.org/github.com/gocelery/gocelery)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/gocelery/gocelery/blob/master/LICENSE)
 [![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fgocelery%2Fgocelery.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fgocelery%2Fgocelery?ref=badge_shield)
 
 ## Why?
 
-Having being involved in a number of projects migrating server from python to go, I have realized Go can help improve performance of existing python web applications.
-Celery distributed tasks are used heavily in many python web applications and this library allows you to implement celery workers in Go as well as being able to submit celery tasks in Go.
+Having been involved in several projects migrating servers from Python to Go, I have realized Go can improve performance of existing python web applications.
+As Celery distributed tasks are often used in such web applications, this library allows you to both implement celery workers and submit celery tasks in Go.
 
 You can also use this library as pure go distributed task queue.
 
 ## Go Celery Worker in Action
 
-![demo](https://raw.githubusercontent.com/shicky/gocelery/master/demo.gif)
+![demo](https://raw.githubusercontent.com/gocelery/gocelery/master/demo.gif)
 
 ## Supported Brokers/Backends
 
@@ -34,77 +35,68 @@ Celery must be configured to use **json** instead of default **pickle** encoding
 This is because Go currently has no stable support for decoding pickle objects.
 Pass below configuration parameters to use **json**.
 
+Starting from version 4.0, Celery uses message protocol version 2 as default value.
+GoCelery does not yet support message protocol version 2, so you must explicitly set `CELERY_TASK_PROTOCOL` to 1.
+
 ```python
 CELERY_TASK_SERIALIZER='json',
 CELERY_ACCEPT_CONTENT=['json'],  # Ignore other content
 CELERY_RESULT_SERIALIZER='json',
 CELERY_ENABLE_UTC=True,
+CELERY_TASK_PROTOCOL=1,
 ```
 
-## Celery Worker Example
+## Example
+
+[GoCelery GoDoc](https://godoc.org/github.com/gocelery/gocelery) has good examples.<br/>
+Also take a look at `example` directory for sample python code.
+
+### GoCelery Worker Example
 
 Run Celery Worker implemented in Go
 
 ```go
-// example/worker/main.go
+// create redis connection pool
+redisPool := &redis.Pool{
+  Dial: func() (redis.Conn, error) {
+		c, err := redis.DialURL("redis://")
+		if err != nil {
+			return nil, err
+		}
+		return c, err
+	},
+}
 
-// Celery Task
-func add(a int, b int) int {
+// initialize celery client
+cli, _ := gocelery.NewCeleryClient(
+	gocelery.NewRedisBroker(redisPool),
+	&gocelery.RedisCeleryBackend{Pool: redisPool},
+	5, // number of workers
+)
+
+// task
+add := func(a, b int) int {
 	return a + b
 }
 
-func main() {
-    // create broker and backend
-	celeryBroker := gocelery.NewRedisCeleryBroker("redis://localhost:6379")
-    celeryBackend := gocelery.NewRedisCeleryBackend("redis://localhost:6379")
+// register task
+cli.Register("worker.add", add)
 
-    // use AMQP instead
-    // celeryBroker := gocelery.NewAMQPCeleryBroker("amqp://")
-    // celeryBackend := gocelery.NewAMQPCeleryBackend("amqp://")
+// start workers (non-blocking call)
+cli.StartWorker()
 
-	// Configure with 2 celery workers
-	celeryClient, _ := gocelery.NewCeleryClient(celeryBroker, celeryBackend, 2)
+// wait for client request
+time.Sleep(10 * time.Second)
 
-	// worker.add name reflects "add" task method found in "worker.py"
-	celeryClient.Register("worker.add", add)
-
-    // Start Worker - blocking method
-	go celeryClient.StartWorker()
-
-    // Wait 30 seconds and stop all workers
-	time.Sleep(30 * time.Second)
-	celeryClient.StopWorker()
-}
-```
-```bash
-go run example/worker/main.go
+// stop workers gracefully (blocking call)
+cli.StopWorker()
 ```
 
-You can use custom struct instead to hold shared structures.
-
-```go
-
-type MyStruct struct {
-	MyInt int
-}
-
-func (so *MyStruct) add(a int, b int) int {
-	return a + b + so.MyInt
-}
-
-// code omitted ...
-
-ms := &MyStruct{10}
-celeryClient.Register("worker.add", ms.add)
-
-// code omitted ...
-```
-
+### Python Client Example
 
 Submit Task from Python Client
-```python
-# example/test.py
 
+```python
 from celery import Celery
 
 app = Celery('tasks',
@@ -117,22 +109,15 @@ def add(x, y):
     return x + y
 
 if __name__ == '__main__':
-    # submit celery task to be executed in Go workers
     ar = add.apply_async((5456, 2878), serializer='json')
     print(ar.get())
 ```
 
-```bash
-python example/test.py
-```
-
-## Celery Client Example
+### Python Worker Example
 
 Run Celery Worker implemented in Python
 
 ```python
-# example/worker.py
-
 from celery import Celery
 
 app = Celery('tasks',
@@ -146,50 +131,55 @@ def add(x, y):
 ```
 
 ```bash
-cd example
 celery -A worker worker --loglevel=debug --without-heartbeat --without-mingle
 ```
+
+### GoCelery Client Example
 
 Submit Task from Go Client
 
 ```go
-func main() {
-    // create broker and backend
-	celeryBroker := gocelery.NewRedisCeleryBroker("redis://localhost:6379")
-    celeryBackend := gocelery.NewRedisCeleryBackend("redis://localhost:6379")
-
-    // use AMQP instead
-    // celeryBroker := gocelery.NewAMQPCeleryBroker("amqp://")
-    // celeryBackend := gocelery.NewAMQPCeleryBackend("amqp://")
-
-    // create client
-	celeryClient, _ := gocelery.NewCeleryClient(celeryBroker, celeryBackend, 0)
-
-    // send task
-	asyncResult, err := celeryClient.Delay("worker.add", 3, 5)
-	if err != nil {
-		panic(err)
-	}
-
-    // check if result is ready
-	isReady, _ := asyncResult.Ready()
-	fmt.Printf("ready status %v\n", isReady)
-
-    // get result with 5s timeout
-	res, err = asyncResult.Get(5 * time.Second)
-	if err != nil {
-		fmt.Println(err)
-	} else {
-        fmt.Println(res)
-    }
+// create redis connection pool
+redisPool := &redis.Pool{
+  Dial: func() (redis.Conn, error) {
+		c, err := redis.DialURL("redis://")
+		if err != nil {
+			return nil, err
+		}
+		return c, err
+	},
 }
-```
 
-```bash
-go run example/client/main.go
+// initialize celery client
+cli, _ := gocelery.NewCeleryClient(
+	gocelery.NewRedisBroker(redisPool),
+	&gocelery.RedisCeleryBackend{Pool: redisPool},
+	1,
+)
+
+// prepare arguments
+taskName := "worker.add"
+argA := rand.Intn(10)
+argB := rand.Intn(10)
+
+// run task
+asyncResult, err := cli.Delay(taskName, argA, argB)
+if err != nil {
+	panic(err)
+}
+
+// get results from backend with timeout
+res, err := asyncResult.Get(10 * time.Second)
+if err != nil {
+	panic(err)
+}
+
+log.Printf("result: %+v of type %+v", res, reflect.TypeOf(res))
 ```
 
 ## Sample Celery Task Message
+
+Celery Message Protocol Version 1
 
 ```javascript
 {
@@ -209,6 +199,10 @@ go run example/client/main.go
 }
 ```
 
+## Projects
+
+Please let us know if you use gocelery in your project!
+
 ## Contributing
 
 You are more than welcome to make any contributions.
@@ -217,6 +211,3 @@ Please create Pull Request for any changes.
 ## LICENSE
 
 The gocelery is offered under MIT license.
-
-
-[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fgocelery%2Fgocelery.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fgocelery%2Fgocelery?ref=badge_large)
